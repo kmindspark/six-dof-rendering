@@ -8,6 +8,7 @@ import cv2
 import imgaug as ia
 from imgaug import augmenters as iaa
 from imgaug.augmentables import Keypoint, KeypointsOnImage
+import matplotlib.pyplot as plt
 
 sometimes = lambda aug: iaa.Sometimes(0.3, aug)
 
@@ -35,7 +36,7 @@ def augment(input, annots, output_dir_img, output_annot_dir, new_idx, show=False
     img = input if channels == 3 else input[:, :, :3]
     img = img.astype(np.uint8)
     # img_blur = blur(image=img)
-    img_aug = seq(image=img)
+    img_aug, kpts, seg_mask = seq(image=img, keypoints=np.array([[annots.item().get("trans")[:2], annots.item().get("pixel")]]), segmentation_maps=np.expand_dims(np.expand_dims(annots.item().get("mask_top").astype(np.int32), axis=0), axis=3))
     if show:
         cv2.imshow("img", img_aug)
         cv2.waitKey(0)
@@ -46,6 +47,10 @@ def augment(input, annots, output_dir_img, output_annot_dir, new_idx, show=False
         gauss = input[:, :, 3].reshape((width, height, 1))
         combined = np.append(img_aug, gauss, axis=2)
         np.save(os.path.join(output_dir_img, "%05d.npy"%new_idx), combined)
+    
+    annots.item()["pixel"] = np.squeeze(kpts)[1]
+    #annots.item()["trans"] = np.concatenate((np.squeeze(kpts)[0], np.array([0])))
+    annots.item()["mask_top"] = np.squeeze(seg_mask)
     np.save(os.path.join(output_annot_dir, '%05d.npy'%new_idx), annots)
 
 
@@ -70,7 +75,7 @@ if __name__ == '__main__':
         #img = np.load(os.path.join(img_dir, '%05d.npy'%i), allow_pickle=True)
         annots = np.load(os.path.join(annots_dir, '%05d.npy'%i), allow_pickle=True)
         cv2.imwrite(os.path.join(output_dir_img, "%05d.jpg"%new_idx), img)
-        np.save(os.path.join(output_dir_img, '%05d.npy'%new_idx), img)
+        #np.save(os.path.join(output_dir_img, '%05d.npy'%new_idx), img)
         np.save(os.path.join(output_annot_dir, '%05d.npy'%new_idx), annots)
         new_idx += 1
         for _ in range(num_augs_per):

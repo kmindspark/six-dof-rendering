@@ -13,6 +13,8 @@ import numpy as np
 from random import sample
 from dr_utils import color_randomize, randomize_light, pattern
 import bmesh
+import bpycv
+from matplotlib import pyplot as plt
 
 '''Usage: blender -b -P render.py'''
 
@@ -65,7 +67,7 @@ def set_render_settings(engine, render_size, generate_masks=True):
         scene.view_settings.view_transform = 'Raw'
         scene.eevee.taa_samples = 1
         scene.eevee.taa_render_samples = 1
-    elif engine == 'CYCLES':   
+    elif engine == 'CYCLES':
         scene.render.image_settings.file_format='JPEG'
         #scene.cycles.samples = 50
         scene.cycles.samples = 10
@@ -91,12 +93,12 @@ def get_calibration_matrix_K_from_blender(camd):
     sensor_height_in_mm = camd.sensor_height
     pixel_aspect_ratio = scene.render.pixel_aspect_x / scene.render.pixel_aspect_y
     if (camd.sensor_fit == 'VERTICAL'):
-        # the sensor height is fixed (sensor fit is horizontal), 
+        # the sensor height is fixed (sensor fit is horizontal),
         # the sensor width is effectively changed with the pixel aspect ratio
-        s_u = resolution_x_in_px * scale / sensor_width_in_mm / pixel_aspect_ratio 
+        s_u = resolution_x_in_px * scale / sensor_width_in_mm / pixel_aspect_ratio
         s_v = resolution_y_in_px * scale / sensor_height_in_mm
     else: # 'HORIZONTAL' and 'AUTO'
-        # the sensor width is fixed (sensor fit is horizontal), 
+        # the sensor width is fixed (sensor fit is horizontal),
         # the sensor height is effectively changed with the pixel aspect ratio
         pixel_aspect_ratio = scene.render.pixel_aspect_x / scene.render.pixel_aspect_y
         s_u = resolution_x_in_px * scale / sensor_width_in_mm
@@ -152,15 +154,18 @@ def render(episode):
     #for node in tree.nodes:
     #    if node.name != "Render Layers":
     #        tree.nodes.remove(node)
-    
+
 def annotate(obj, episode, render_size, transformation_matrix):
     scene = bpy.context.scene
     trans = np.array(obj.matrix_world.translation)
     camera_coord = bpy_extras.object_utils.world_to_camera_view(scene, bpy.context.scene.camera, obj.matrix_world.translation)
     pixel = [round(camera_coord.x * render_size[0]), round(render_size[1] - camera_coord.y * render_size[1])]
     rot_euler = obj.matrix_world.inverted().to_euler()
-    metadata = {"trans": trans, "rot": np.array(rot_euler), "pixel":np.array(pixel)}
-    np.save('annots/%05d.npy'%episode,metadata) 
+
+    result = bpycv.render_data()
+    metadata = {"trans": trans, "rot": np.array(rot_euler), "pixel":np.array(pixel), "mask_top": result['inst']}
+
+    np.save('annots/%05d.npy'%episode,metadata)
 
 def generate_obj():
     bpy.ops.import_mesh.stl(filepath="cyl.stl")
@@ -181,10 +186,10 @@ def generate_state(obj, trans_x_range=(0,0), trans_y_range=(0,0), trans_z_range=
                         rot_z_range=(-np.pi/2, np.pi/2)):
     obj.location += Vector((random.uniform(trans_x_range[0], trans_x_range[1]), \
                             random.uniform(trans_y_range[0], trans_y_range[1]), \
-                            random.uniform(trans_z_range[0], trans_z_range[1]))) 
+                            random.uniform(trans_z_range[0], trans_z_range[1])))
     obj.rotation_euler = (random.uniform(rot_x_range[0], rot_x_range[1]), \
                           random.uniform(rot_y_range[0], rot_y_range[1]), \
-                          random.uniform(rot_z_range[0], rot_z_range[1])) 
+                          random.uniform(rot_z_range[0], rot_z_range[1]))
     obj.modifiers["SimpleDeform"].angle = random.uniform(0, 1.5*np.pi)*random.choice((-1,1))
     return obj.location, obj.rotation_euler
 
@@ -192,7 +197,7 @@ def generate_state(obj, trans_x_range=(0,0), trans_y_range=(0,0), trans_z_range=
 def generate_table():
     print("here")
     bpy.ops.mesh.primitive_plane_add(size=2, location=(0,0,-0.9))
-    table = bpy.context.object 
+    table = bpy.context.object
     #table = colo(table, 'table_texture.png')
     return table
 
@@ -239,9 +244,12 @@ def generate_dataset(iters=1):
             distractor_cyl_1.hide_render = False
 
         render(episode)
+        obj["inst_id"] = 1
+        distractor_cyl_1["inst_id"] = 2
         annotate(obj, episode, render_size, transformation_matrix)
         obj.location = np.zeros(3)
     np.save('annots/cam_to_world.npy', np.array(transformation_matrix))
 
 if __name__ == '__main__':
-    generate_dataset(10)
+    generate_dataset(400)
+

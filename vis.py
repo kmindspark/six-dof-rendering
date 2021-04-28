@@ -32,9 +32,7 @@ def show_annots(idx, save=True):
     metadata = np.load("annots/%05d.npy"%idx, allow_pickle=True)
     trans = metadata.item().get("trans")
     rot_euler = metadata.item().get("rot")
-    pixel = metadata.item().get("pixel")
-    pixel = (200/60)*pixel
-    pixel = tuple(pixel.astype(int))
+    pixel = tuple(metadata.item().get("pixel").astype(int))
     rot_mat = R.from_euler('xyz', rot_euler).as_matrix()
     #axes = np.eye(3)
     axes = np.float32([[1,0,0],[0,1,0],[0,0,-1]])*0.3
@@ -46,7 +44,10 @@ def show_annots(idx, save=True):
     for axis in axes:
         axes_projected.append(project_3d_point(world_to_cam, Vector(axis), render_size))
     axes_projected = np.array(axes_projected)
-    center_projected = tuple(center_projected)
+    center_projected = pixel #tuple(center_projected)
+    pixel = (200/60)*metadata.item().get("pixel")
+    pixel = tuple(pixel.astype(int))
+
     vis = img.copy()
     vis = draw(vis,center_projected,axes_projected)
     vis = cv2.resize(vis,(200,200))
