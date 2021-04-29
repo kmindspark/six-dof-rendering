@@ -137,29 +137,66 @@ def compute_world_to_camera_matrix(camera):
 def render(episode):
     bpy.context.scene.render.filepath = "./images/%05d.jpg"%episode
     bpy.ops.render.render(write_still=True)
-    #scene = bpy.context.scene
-    #tree = bpy.context.scene.node_tree
-    #links = tree.links
-    #render_node = tree.nodes["Render Layers"]
-    #id_mask_node = tree.nodes.new(type="CompositorNodeIDMask")
-    #id_mask_node.use_antialiasing = True
-    #id_mask_node.index = 1
-    #composite = tree.nodes.new(type = "CompositorNodeComposite")
-    #links.new(render_node.outputs['IndexOB'], id_mask_node.inputs["ID value"])
-    #links.new(id_mask_node.outputs[0], composite.inputs["Image"])
-    #scene.render.filepath = 'masks/%05d.jpg'%episode
-    #bpy.ops.render.render(write_still=True)
-    #for node in tree.nodes:
-    #    if node.name != "Render Layers":
-    #        tree.nodes.remove(node)
+
+def get_center_axes(pixel, rot_euler, trans, render_size, transformation_matrix):
+    world_to_cam = transformation_matrix
+    rot_mat = R.from_euler('xyz', rot_euler).as_matrix()
+    #axes = np.eye(3)
+    axes = np.float32([[1,0,0],[0,1,0],[0,0,-1]])*0.3
+    #axes = np.float32([[1,0,0],[0,1,0]])*0.3
+    axes = rot_mat@axes
+    axes += trans
+    axes_projected = []
+    center_projected = project_3d_point(world_to_cam, Vector(trans), render_size)
+    for axis in axes:
+        axes_projected.append(project_3d_point(world_to_cam, Vector(axis), render_size))
+    axes_projected = np.array(axes_projected)
+    center_projected = pixel #tuple(center_projected)
+    pixel = (200/60)*pixel
+    pixel = tuple(pixel.astype(int))
+    return pixel, center_projected, axes_projected
+
+def project_3d_point(transformation_matrix,p,render_size):
+    p1 = transformation_matrix @ Vector((p.x, p.y, p.z, 1))
+    p2 = Vector(((p1.x/p1.w, p1.y/p1.w)))
+    p2 = (np.array(p2) - (-1))/(1 - (-1)) # Normalize -1,1 to 0,1 range
+    pixel = [int(p2[0] * render_size[0]), int(render_size[1] - p2[1]*render_size[1])]
+    return pixel
+
+def get_angle(source_px, vec1_endpoint, d_source_px, vec2_endpoint):
+    y1 = vec1_endpoint[0].ravel()
+    y2 = vec2_endpoint[0].ravel()
+    v1 = y1 - source_px
+    v2 = y2 - d_source_px
+    v1 = v1 / np.linalg.norm(v1)
+    v2 = v2 / np.linalg.norm(v2)
+    dot_product = np.dot(v1, v2)
+    angle = np.arccos(dot_product)
+    # if angle > (np.pi/2):
+    #     angle = angle - np.pi 
+    # elif angle < (-np.pi/2):
+    #     angle = angle + np.pi
+    print(angle)
+    return -1*angle
     
-def annotate(obj, episode, render_size, transformation_matrix):
+def annotate(obj, episode, render_size, transformation_matrix, distractor=None):
     scene = bpy.context.scene
     trans = np.array(obj.matrix_world.translation)
     camera_coord = bpy_extras.object_utils.world_to_camera_view(scene, bpy.context.scene.camera, obj.matrix_world.translation)
     pixel = [round(camera_coord.x * render_size[0]), round(render_size[1] - camera_coord.y * render_size[1])]
     rot_euler = obj.matrix_world.inverted().to_euler()
-    metadata = {"trans": trans, "rot": np.array(rot_euler), "pixel":np.array(pixel)}
+    if distractor == None:
+        metadata = {"trans": trans, "rot": np.array(rot_euler), "pixel":np.array(pixel), "angle": np.array([0.0])} # "d_rot": np.array(rot_euler)
+    else:
+        # learn orientation for distractor to determine orthogonality
+        d_trans = np.array(distractor.matrix_world.translation)
+        d_camera_coord = bpy_extras.object_utils.world_to_camera_view(scene, bpy.context.scene.camera, distractor.matrix_world.translation)
+        d_pixel = [round(d_camera_coord.x * render_size[0]), round(render_size[1] - d_camera_coord.y * render_size[1])]
+        d_rot_euler = distractor.matrix_world.inverted().to_euler()
+        _, center_projected, axes_projected = get_center_axes(np.array(pixel), np.array(rot_euler), trans, render_size, transformation_matrix)
+        _, d_center_projected, d_axes_projected = get_center_axes(np.array(d_pixel), np.array(d_rot_euler), d_trans, render_size, transformation_matrix)
+        angle = get_angle(center_projected, axes_projected, d_center_projected, d_axes_projected)
+        metadata = {"trans": trans, "rot": np.array(rot_euler), "pixel":np.array(pixel), "angle": np.array([angle])} #"d_rot": np.array(d_rot_euler)
     np.save('annots/%05d.npy'%episode,metadata) 
 
 def generate_obj():
@@ -185,8 +222,9 @@ def generate_state(obj, trans_x_range=(0,0), trans_y_range=(0,0), trans_z_range=
     obj.rotation_euler = (random.uniform(rot_x_range[0], rot_x_range[1]), \
                           random.uniform(rot_y_range[0], rot_y_range[1]), \
                           random.uniform(rot_z_range[0], rot_z_range[1])) 
+    # this is the curvature / deform angle you want (self note @VAINAVI)
     obj.modifiers["SimpleDeform"].angle = random.uniform(0, 1.5*np.pi)*random.choice((-1,1))
-    return obj.location, obj.rotation_euler
+    return obj.location, obj.rotation_euler, obj.modifiers["SimpleDeform"].angle
 
 
 def generate_table():
@@ -234,14 +272,15 @@ def generate_dataset(iters=1):
         if random.random() < 0.3:
             distractor_cyl_1.hide_set(True)
             distractor_cyl_1.hide_render = True
+            render(episode)
+            annotate(obj, episode, render_size, transformation_matrix, distractor=None)
         else:
             distractor_cyl_1.hide_set(False)
             distractor_cyl_1.hide_render = False
-
-        render(episode)
-        annotate(obj, episode, render_size, transformation_matrix)
+            render(episode)
+            annotate(obj, episode, render_size, transformation_matrix, distractor = distractor_cyl_1)
         obj.location = np.zeros(3)
     np.save('annots/cam_to_world.npy', np.array(transformation_matrix))
 
 if __name__ == '__main__':
-    generate_dataset(10)
+    generate_dataset(750)
